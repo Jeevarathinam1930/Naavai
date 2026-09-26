@@ -1,0 +1,6 @@
+services:
+  - type: web
+    name: naavai-ai-f6
+    env: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
