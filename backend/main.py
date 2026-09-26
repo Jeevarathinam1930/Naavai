@@ -3,10 +3,14 @@ Main FastAPI Application Server
 Coordinates all 5 layers and exposes REST API endpoints for the dashboard.
 Team F6 - Naavai AI - PS26006 (Production Prototype)
 """
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
+from backend.reporting.pdf_generator import (
+    generate_cvc_audit_pdf,
+    generate_broker_order_pdf,
+)
 from backend.physics.voyage_cost_engine import VoyageCostEngine
 from backend.physics.port_clearance_checker import check_clearance
 from backend.simulation.port_queue_sim import (
@@ -301,3 +305,28 @@ def audit_receipt(req: CargoIndentRequest):
     ])
 
     return "\n".join(lines) + "\n"
+
+
+@app.post("/api/v1/audit-receipt-pdf")
+def audit_receipt_pdf(req: CargoIndentRequest):
+    """Generates an executive-styled CVC/CAG Audit Receipt PDF."""
+    r = analyze_shipment(req)
+    pdf_bytes = generate_cvc_audit_pdf(r, req.model_dump())
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": "attachment; filename=SAIL_CVC_CAG_Audit_Receipt.pdf"},
+    )
+
+
+@app.post("/api/v1/broker-order-pdf")
+def broker_order_pdf(req: CargoIndentRequest):
+    """Generates an executive-styled Broker Cargo Order PDF."""
+    r = analyze_shipment(req)
+    pdf_bytes = generate_broker_order_pdf(r, req.model_dump())
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": "attachment; filename=SAIL_Broker_Cargo_Order.pdf"},
+    )
+
