@@ -35,7 +35,8 @@ def demurrage_exposure(wait_days: float, cargo_mt: float, discharge_rate_mt_day:
     }
 
 
-def simulate_port_discrete_event(port: str, incoming_cargo_mt: float, horizon_days: int = 30, seed: int = 42) -> dict:
+def simulate_port_discrete_event(port: str, incoming_cargo_mt: float, horizon_days: int = 30, seed: int = 42,
+                                 arrival_rate_multiplier: float = 1.0) -> dict:
     """Discrete-event simulation using SimPy for stochastic vessel arrival and queue wait."""
     try:
         import simpy
@@ -58,7 +59,7 @@ def simulate_port_discrete_event(port: str, incoming_cargo_mt: float, horizon_da
         def vessel_generator(env, res):
             i = 0
             while env.now < horizon_days:
-                inter_arrival = random.expovariate(cfg["default_arrival_rate"])
+                inter_arrival = random.expovariate(cfg["default_arrival_rate"] * max(0.1, arrival_rate_multiplier))
                 yield env.timeout(inter_arrival)
                 i += 1
                 service = random.uniform(2.0, 3.5)

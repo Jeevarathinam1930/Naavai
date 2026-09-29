@@ -17,8 +17,21 @@ VESSEL_DIMS = {
 
 
 def check_clearance(port: str, vessel_class: str, cargo_tonnage: float = None, tidal_height: float = 1.0, squat: float = 0.3) -> dict:
-    limits = PORT_LIMITS.get(port, PORT_LIMITS["Paradip"])
-    dims = VESSEL_DIMS.get(vessel_class, VESSEL_DIMS["Kamsarmax"])
+    limits = PORT_LIMITS.get(port)
+    dims = VESSEL_DIMS.get(vessel_class)
+    if limits is None or dims is None:
+        unknown = []
+        if limits is None:
+            unknown.append(f"unsupported destination port '{port}'")
+        if dims is None:
+            unknown.append(f"unsupported vessel class '{vessel_class}'")
+        return {
+            "port": port, "vessel_class": vessel_class, "allowed": False,
+            "operating_draft_m": None, "ukc_m": None, "min_ukc_m": None,
+            "max_permissible_cargo_mt": 0.0,
+            "checks": {"ukc": False, "loa": False, "beam": False, "gear": False},
+            "reason": "REJECTED: " + "; ".join(unknown),
+        }
     
     # Haldia estuarine tidal boost (Hooghly river navigation typically timed at high water 2.0-3.0m)
     if port == "Haldia" and tidal_height <= 1.0:

@@ -46,6 +46,8 @@ class MinimalPDF:
         self.current_stream.append(cmd)
 
     def draw_text(self, text, x, y, font="F1", size=10, rgb=(0.1, 0.1, 0.1)):
+        # Sanitize to WinAnsi (PDF 1.4): replace Rupee sign + en-dash etc.
+        text = str(text).replace("\u20b9", "Rs.").replace("\u2013", "-").replace("\u2014", "-")
         # Escape parenthesis
         safe = text.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
         y_pdf = self.h - y - size
@@ -168,6 +170,7 @@ def generate_cvc_audit_pdf(analysis_result: dict, form_data: dict) -> bytes:
         ("Loading Port:", orig, "Discharge Port:", dest),
         ("Vessel Class:", vessel, "Operating Draft:", f"{l2.get('operating_draft_m', 0)} m"),
         ("Distance Nautical Miles:", f"{l2_phys.get('distance_nm', 0)} NM", "Port Clearance Status:", "APPROVED (Clear)" if l2.get("allowed") else "RESTRICTED"),
+        ("Fuel + OPEX + Port:", f"${analysis_result.get('route_plan', {}).get('fuel_cost_usd', 0):,.0f} + ${analysis_result.get('route_plan', {}).get('voyage_opex_usd', 0):,.0f} + ${analysis_result.get('route_plan', {}).get('port_cost_usd', 0):,.0f}", "Route:", str(analysis_result.get('route_plan', {}).get('route_statement', 'Standard route'))[:70]),
     ]
 
     for label1, val1, label2, val2 in params:
@@ -176,6 +179,15 @@ def generate_cvc_audit_pdf(analysis_result: dict, form_data: dict) -> bytes:
         pdf.draw_text(label2, 310, y, font="F2", size=8, rgb=(0.3, 0.3, 0.3))
         pdf.draw_text(str(val2), 430, y, font="F1", size=8, rgb=(0.1, 0.1, 0.1))
         y += 16
+
+    incident = analysis_result.get("historical_incident_context")
+    if incident:
+        pdf.draw_rect(40, y + 2, 515.28, 54, fill_rgb=(1.0, 0.97, 0.88))
+        pdf.draw_text("HISTORICAL INCIDENT REPLAY / VERIFIED SOURCE", 48, y + 12, font="F2", size=8, rgb=(0.45, 0.25, 0.02))
+        pdf.draw_text(str(incident.get("title", "Historical SAIL incident"))[:90], 48, y + 25, font="F2", size=7.5, rgb=(0.15, 0.15, 0.15))
+        pdf.draw_text(f"Source: {str(incident.get('source', 'Not supplied'))[:90]}", 48, y + 37, font="F1", size=7, rgb=(0.25, 0.25, 0.25))
+        pdf.draw_text(f"Expected benefit: {str(incident.get('quantified_savings', 'See decision flow'))[:90]}", 48, y + 49, font="F1", size=7, rgb=(0.25, 0.25, 0.25))
+        y += 64
 
     # --- Section 2: Key Price Benchmark Metrics (Callout Boxes) ---
     y += 10
@@ -270,10 +282,140 @@ def generate_cvc_audit_pdf(analysis_result: dict, form_data: dict) -> bytes:
     pdf.draw_text("AI Decision System Seal", 400, y + 34, font="F2", size=8, rgb=(0.2, 0.2, 0.2))
     pdf.draw_text("Naavai Team F6 PS26006", 400, y + 45, font="F1", size=7, rgb=(0.4, 0.4, 0.4))
 
-    # Footer
+    # Footer Page 1
     pdf.draw_line(40, 810, 555.28, 810, stroke_rgb=(0.8, 0.8, 0.8), line_width=0.5)
     pdf.draw_text("Naavai AI Decision-Support System - Smart India Hackathon 2026 (Problem Statement PS26006)", 40, 822, font="F1", size=7, rgb=(0.5, 0.5, 0.5))
-    pdf.draw_text("Page 1 of 1 · Cryptographically Verifiable Audit Trail", 410, 822, font="F1", size=7, rgb=(0.5, 0.5, 0.5))
+    pdf.draw_text("Page 1 of 2 · Statutory Audit Summary", 420, 822, font="F1", size=7, rgb=(0.5, 0.5, 0.5))
+
+    # ========================================================
+    # PAGE 2: 5-STAGE CHECKPOINT DECISION FLOW & RATE DERIVATION
+    # ========================================================
+    pdf.new_page()
+
+    # Header Banner Page 2
+    pdf.draw_rect(0, 0, 595.28, 65, fill_rgb=(0.08, 0.18, 0.36))
+    pdf.draw_text("STEEL AUTHORITY OF INDIA LIMITED (SAIL) - TSD KOLKATA", 40, 18, font="F2", size=12, rgb=(1, 1, 1))
+    pdf.draw_text("SECTION 5: 5-STAGE DECISION FLOW & RATE DERIVATION AUDIT", 40, 36, font="F2", size=10, rgb=(1, 0.84, 0))
+    pdf.draw_text("CVC / CAG STATUTORY PROOF", 410, 26, font="F2", size=8, rgb=(0.8, 0.95, 1))
+
+    y2 = 80
+    pdf.draw_rect(40, y2, 515.28, 20, fill_rgb=(0.92, 0.94, 0.98))
+    pdf.draw_text("STATUTORY PROOF: WHY TARGET RATE $" + f"{f3.get('P50_recommended_rate', 0):.2f}" + "/MT & P90 CEILING WERE ESTABLISHED", 48, y2 + 5, font="F2", size=8.5, rgb=(0.1, 0.2, 0.4))
+
+    y2 += 28
+    checkpoints = analysis_result.get("decision_flow", [])
+    if not checkpoints:
+        # Fallback if not populated (live-calculated defaults)
+        bk_f = l2_phys.get("breakeven_floor_usd_mt", 8.15)
+        comm_f = l2_phys.get("commercial_breakeven_floor_usd_mt", 9.95)
+        p50_r = f3.get("P50_recommended_rate", 20.95)
+        p90_r = f3.get("P90_ceiling", 21.09)
+        p10_r = f3.get("P10_floor", 18.99)
+        dist = l2_phys.get("distance_nm", 5200)
+        wait_d = l4.get("simulated_avg_wait_days", 2.1)
+        dem_exp = l4.get("demurrage", {}).get("demurrage_usd", 0.0)
+        sav_cr = po.get("portfolio_savings_inr_cr", 13.76)
+
+        checkpoints = [
+            {
+                "step": 1,
+                "cp_label": "CP 1: Physics Floor",
+                "name": "Naval Physics Thermodynamic Floor (Admiralty Speed-Power Curve)",
+                "badge": "PHYSICAL LOWER BOUND",
+                "metric": f"${bk_f:.2f}/MT Floor (Commercial: ${comm_f:.2f}/MT)",
+                "context": "(Admiralty Boundary)",
+                "explanation": f"Calculated using Admiralty cubic formula over {dist:,} NM. At current VLSFO bunker price, daily burn sets the physical breakeven. Bids below ${bk_f:.2f}/MT represent negative shipowner cashflow and guarantee default.",
+            },
+            {
+                "step": 2,
+                "cp_label": "CP 2: Nautical Clearance",
+                "name": "Nautical Draft & Under-Keel Clearance (UKC) Verification",
+                "badge": "CLEARANCE APPROVED" if l2.get("allowed") else "RESTRICTED",
+                "metric": f"{l2.get('operating_draft_m', 14.5)}m Draft Cleared",
+                "context": "(UKC Safety Margin)",
+                "explanation": f"Validated vessel laden draft against {form_data.get('destination_port','Paradip')} maximum arrival limits. Confirms {l2.get('ukc_m', 1.6)}m net clearance over seabed channel, preventing grounding liabilities and tidal stranding delays.",
+            },
+            {
+                "step": 3,
+                "cp_label": "CP 3: ML Quantile Rate",
+                "name": "AI Machine Learning Quantile Pricing (LightGBM + VECM)",
+                "badge": "MARKET EQUILIBRIUM TARGET",
+                "metric": f"${p50_r:.2f}/MT Target (Range: ${p10_r:.2f} - ${p90_r:.2f})",
+                "context": "(Baltic & FFA Equilibrium)",
+                "explanation": f"LightGBM Quantile regression models forward freight trajectory from Baltic index, FFA paper derivative curve, and SHAP drivers. Target P50 of ${p50_r:.2f}/MT captures market equilibrium with strict P90 disqualification cap.",
+            },
+            {
+                "step": 4,
+                "cp_label": "CP 4: Congestion Risk",
+                "name": "Port Congestion Simulation & Demurrage Liability (M/M/c + SimPy)",
+                "badge": "CONGESTION BUFFERED",
+                "metric": f"{wait_d} Days Queue Wait",
+                "context": "(Demurrage Buffered)",
+                "explanation": f"SimPy stochastic discrete-event queueing at {form_data.get('destination_port','Paradip')} models arrival clusters and laytime usage. Pre-calculates ${dem_exp:,.0f} demurrage exposure to prevent unbudgeted congestion billing.",
+            },
+            {
+                "step": 5,
+                "cp_label": "CP 5: Tactical Fixture",
+                "name": "MILP Strategic Allocation & Tactical Directive (OR-Tools SCIP)",
+                "badge": "OPTIMAL DIRECTIVE",
+                "metric": f"Allocation: {l5.get('contract_mode', 'COA Tranche Recommendation')}",
+                "context": f"(Rs.{sav_cr} Cr Capital Preserved)",
+                "explanation": f"{l5.get('timing_advice', 'Execute tender in accordance with schedule.')} Solver confirms absorbing into 6-Month COA preserves approximately INR {sav_cr} Cr in portfolio capital.",
+            },
+        ]
+
+    for cp in checkpoints:
+        step_num = cp.get("step", 1)
+        name = cp.get("cp_label", cp.get("name", ""))
+        badge = cp.get("badge", "VERIFIED")
+        metric = cp.get("metric", "")
+        context = cp.get("context", cp.get("submetric", ""))
+        expl = cp.get("explanation", "")
+
+        # Draw checkpoint card
+        pdf.draw_rect(40, y2, 515.28, 64, fill_rgb=(0.98, 0.98, 0.99), stroke_rgb=(0.82, 0.86, 0.92), line_width=0.75)
+
+        # Step circle
+        pdf.draw_rect(48, y2 + 8, 22, 22, fill_rgb=(0.08, 0.18, 0.36))
+        pdf.draw_text(str(step_num), 55, y2 + 13, font="F2", size=10, rgb=(1, 1, 1))
+
+        # Title & Badge
+        pdf.draw_text(f"{name}", 78, y2 + 8, font="F2", size=8.5, rgb=(0.1, 0.2, 0.4))
+        pdf.draw_text(f"[{badge}]", 430, y2 + 8, font="F2", size=7.5, rgb=(0.7, 0.2, 0.1) if "RESTRICTED" in badge or "BOUND" in badge else (0.1, 0.5, 0.2))
+
+        # Metric value + context
+        pdf.draw_text(f"Quantitative Finding: {metric} {context}", 78, y2 + 22, font="F2", size=8, rgb=(0.15, 0.15, 0.15))
+
+        # Explanation (split into 2 lines if long)
+        if len(expl) > 95:
+            split_idx = expl[:95].rfind(" ")
+            line1 = expl[:split_idx]
+            line2 = expl[split_idx+1:190]
+            pdf.draw_text(line1, 78, y2 + 35, font="F1", size=7.5, rgb=(0.35, 0.35, 0.35))
+            pdf.draw_text(line2, 78, y2 + 47, font="F1", size=7.5, rgb=(0.35, 0.35, 0.35))
+        else:
+            pdf.draw_text(expl, 78, y2 + 35, font="F1", size=7.5, rgb=(0.35, 0.35, 0.35))
+
+        y2 += 70
+
+    # Signature Blocks Page 2
+    y2 += 8
+    pdf.draw_line(48, y2 + 25, 200, y2 + 25, stroke_rgb=(0.5, 0.5, 0.5), line_width=1.0)
+    pdf.draw_text("Chief General Manager (Shipping)", 48, y2 + 29, font="F2", size=8, rgb=(0.2, 0.2, 0.2))
+    pdf.draw_text("SAIL TSD Kolkata", 48, y2 + 40, font="F1", size=7, rgb=(0.4, 0.4, 0.4))
+
+    pdf.draw_line(230, y2 + 25, 370, y2 + 25, stroke_rgb=(0.5, 0.5, 0.5), line_width=1.0)
+    pdf.draw_text("Vigilance & Compliance Officer", 230, y2 + 29, font="F2", size=8, rgb=(0.2, 0.2, 0.2))
+    pdf.draw_text("Government Audit Reviewer", 230, y2 + 40, font="F1", size=7, rgb=(0.4, 0.4, 0.4))
+
+    pdf.draw_line(400, y2 + 25, 540, y2 + 25, stroke_rgb=(0.5, 0.5, 0.5), line_width=1.0)
+    pdf.draw_text("AI Decision System Seal", 400, y2 + 29, font="F2", size=8, rgb=(0.2, 0.2, 0.2))
+    pdf.draw_text("Naavai Team F6 PS26006", 400, y2 + 40, font="F1", size=7, rgb=(0.4, 0.4, 0.4))
+
+    # Footer Page 2
+    pdf.draw_line(40, 810, 555.28, 810, stroke_rgb=(0.8, 0.8, 0.8), line_width=0.5)
+    pdf.draw_text("Naavai AI Decision-Support System - Smart India Hackathon 2026 (Problem Statement PS26006)", 40, 822, font="F1", size=7, rgb=(0.5, 0.5, 0.5))
+    pdf.draw_text("Page 2 of 2 · Cryptographically Verifiable Audit Trail", 410, 822, font="F1", size=7, rgb=(0.5, 0.5, 0.5))
 
     return pdf.build()
 

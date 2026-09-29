@@ -1,0 +1,12 @@
+:root {
+  --status-success: #16A34A;
+  --status-warning: #D97706;
+  --status-danger: #DC2626;
+  --status-info: #2563EB;
+  --accent-selected: #2563EB;
+  --brand-red: #DC2626;
+  --space-1: 8px;
+  --space-2: 16px;
+  --space-3: 24px;
+  --space-4: 32px;
+}

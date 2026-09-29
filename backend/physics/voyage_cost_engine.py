@@ -4,6 +4,7 @@ Calculates Admiralty fuel consumption and sets the minimum breakeven floor.
 Team F6 - Naavai AI - PS26006
 """
 import math
+from datetime import datetime
 
 
 class VoyageCostEngine:
@@ -58,13 +59,20 @@ class VoyageCostEngine:
 
     @classmethod
     def compute_breakeven_floor(cls, origin: str, dest: str, vessel_class: str, bunker_price: float,
-                                cargo_tonnage: float = None, include_ballast_share: float = 0.35) -> dict:
+                                cargo_tonnage: float = None, include_ballast_share: float = 0.35,
+                                departure_month: int | None = None) -> dict:
         dist_nm = cls.ROUTES_NM.get((origin, dest))
         is_estimated_dist = False
-        if dist_nm is None:
+        routing_note = "Standard route"
+        if vessel_class == "Capesize" and origin == "Gladstone" and dest in {"Paradip", "Visakhapatnam", "Haldia", "Dhamra"}:
+            dist_nm = 5980
+            is_estimated_dist = False
+            routing_note = "Lombok Strait bypass selected for deep-draft Capesize"
+        elif dist_nm is None:
             # Smart nautical distance approximation if not in explicit table
             dist_nm = 4850
             is_estimated_dist = True
+            routing_note = "Estimated distance: route not in nautical distance table"
 
         specs = cls.VESSEL_SPECS[vessel_class]
         speed = 12.5  # standard laden eco-speed in knots
@@ -74,7 +82,9 @@ class VoyageCostEngine:
         port_days = 6.0  # 3 days loading + 3 days discharge
         total_days = sea_days + port_days
 
-        fuel_per_day = cls.calculate_fuel_burn_per_day(vessel_class, speed)
+        month = departure_month or datetime.utcnow().month
+        monsoon_margin = 1.12 if month in {6, 7, 8, 9} else 1.0
+        fuel_per_day = cls.calculate_fuel_burn_per_day(vessel_class, speed) * monsoon_margin
         laden_fuel_mt = (sea_days * fuel_per_day) + (port_days * specs["aux_port"])
         laden_fuel_cost = laden_fuel_mt * bunker_price
 
@@ -99,6 +109,8 @@ class VoyageCostEngine:
             "destination": dest,
             "distance_nm": dist_nm,
             "is_estimated_distance": is_estimated_dist,
+            "routing_note": routing_note,
+            "monsoon_margin": monsoon_margin,
             "sea_days": round(sea_days, 1),
             "total_days": round(total_days, 1),
             "fuel_consumed_mt": round(laden_fuel_mt, 1),

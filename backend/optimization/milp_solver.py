@@ -10,8 +10,10 @@ def optimise_shipments(spot_costs: list, coa_options: list):
     """spot_costs: list[float] per shipment. coa_options: list of {shipments:[idx], price:float}."""
     n = len(spot_costs)
     if not _HAS_OR:
-        return {"mode": "greedy-fallback", "spot": list(range(n)), "coa_taken": [], "total": round(sum(spot_costs), 2)}
+        return {"mode": "greedy-fallback", "status": "solver_unavailable", "spot": list(range(n)), "coa_taken": [], "total": round(sum(spot_costs), 2)}
     solver = pywraplp.Solver.CreateSolver("SCIP")
+    if solver is None:
+        return {"mode": "greedy-fallback", "status": "solver_unavailable", "spot": list(range(n)), "coa_taken": [], "total": round(sum(spot_costs), 2)}
     x = [solver.IntVar(0, 1, f"x{i}") for i in range(n)]
     y = [solver.IntVar(0, 1, f"y{k}") for k in range(len(coa_options))]
     for i in range(n):
@@ -23,9 +25,16 @@ def optimise_shipments(spot_costs: list, coa_options: list):
     for k, c in enumerate(coa_options):
         obj.SetCoefficient(y[k], c["price"])
     obj.SetMinimization()
-    solver.Solve()
+    status = solver.Solve()
+    if status not in (pywraplp.Solver.OPTIMAL, pywraplp.Solver.FEASIBLE):
+        return {
+            "mode": "greedy-fallback",
+            "status": "infeasible" if status == pywraplp.Solver.INFEASIBLE else "solver_failed",
+            "spot": list(range(n)), "coa_taken": [], "total": round(sum(spot_costs), 2),
+        }
     return {
         "mode": "milp",
+        "status": "optimal" if status == pywraplp.Solver.OPTIMAL else "feasible",
         "spot": [i for i in range(n) if x[i].solution_value() > 0.5],
         "coa_taken": [k for k in range(len(coa_options)) if y[k].solution_value() > 0.5],
         "total": round(obj.Value(), 2),
@@ -136,4 +145,3 @@ def generate_sample_sail_indent_program(base_rate: float = 20.0) -> dict:
     ]
 
     return optimise_schedule(shipments, coa_options)
-
