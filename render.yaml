@@ -2,8 +2,7 @@ services:
   - type: web
     name: naavai-ai-f6
     runtime: docker
-    dockerfilePath: ./Naavai/Dockerfile
-    dockerContext: ./Naavai
+    dockerfilePath: ./Dockerfile
     plan: free
     branch: master
     healthCheckPath: /api/v1/health
